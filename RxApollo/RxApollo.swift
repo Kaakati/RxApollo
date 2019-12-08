@@ -5,7 +5,6 @@
 //  Created by Scott Hoyt on 5/9/17.
 //  Copyright © 2017 Scott Hoyt. All rights reserved.
 //
-
 import Foundation
 import RxSwift
 import Apollo
@@ -19,11 +18,11 @@ public enum RxApolloError: Error {
 /// Reactive extensions for `ApolloClient`.
 public final class ApolloReactiveExtensions {
     private let client: ApolloClient
-
+    
     fileprivate init(_ client: ApolloClient) {
         self.client = client
     }
-
+    
     /// Fetches a query from the server or from the local cache, depending on the current contents of the cache and the specified cache policy.
     ///
     /// - Parameters:
@@ -36,24 +35,34 @@ public final class ApolloReactiveExtensions {
         cachePolicy: CachePolicy = .returnCacheDataElseFetch,
         queue: DispatchQueue = DispatchQueue.main) -> Maybe<Query.Data> {
         return Maybe.create { maybe in
-            let cancellable = self.client.fetch(query: query, cachePolicy: cachePolicy, queue: queue) { result, error in
-                if let error = error {
-                    maybe(.error(error))
-                } else if let errors = result?.errors {
-                    maybe(.error(RxApolloError.graphQLErrors(errors)))
-                } else if let data = result?.data {
-                    maybe(.success(data))
-                } else {
-                    maybe(.completed)
-                }
-            }
-
+            let cancellable = self.client.fetch(query: query,
+                                                cachePolicy: cachePolicy,
+                                                context: nil,
+                                                queue: queue, resultHandler: { result in
+                                                    switch result {
+                                                    case .success(let response):
+                                                        print(response)
+                                                        if let errors = response.errors {
+                                                            if !errors.isEmpty {
+                                                                maybe(.error(RxApolloError.graphQLErrors(errors)))
+                                                            }
+                                                        } else if let data = response.data {
+                                                            maybe(.success(data))
+                                                        } else {
+                                                            maybe(.completed)
+                                                        }
+                                                    case .failure(let error):
+                                                        print(error)
+                                                        maybe(.error(error))
+                                                    }
+                                                    
+            })
             return Disposables.create {
                 cancellable.cancel()
             }
         }
     }
-
+    
     /// Watches a query by first fetching an initial result from the server or from the local cache, depending on the current contents of the cache and the specified cache policy. After the initial fetch, the returned `Observable` will emit events whenever any of the data the query result depends on changes in the local cache.
     ///
     /// - Parameters:
@@ -66,24 +75,32 @@ public final class ApolloReactiveExtensions {
         cachePolicy: CachePolicy = .returnCacheDataElseFetch,
         queue: DispatchQueue = DispatchQueue.main) -> Observable<Query.Data> {
         return Observable.create { observer in
-            let watcher = self.client.watch(query: query, cachePolicy: cachePolicy, queue: queue) { result, error in
-                if let error = error {
-                    observer.onError(error)
-                } else if let errors = result?.errors {
-                    observer.onError(RxApolloError.graphQLErrors(errors))
-                } else if let data = result?.data {
-                    observer.onNext(data)
-                }
-
-                // Should we silently ignore the case where `result` and `error` are both nil, or should this be an error situation?
-            }
-
+            
+            let watcher = self.client.watch(query: query,
+                                            cachePolicy: cachePolicy,
+                                            queue: queue, resultHandler: { result in
+                                                switch result {
+                                                case .success(let response):
+                                                    print(response)
+                                                    if let errors = response.errors {
+                                                        if !errors.isEmpty {
+                                                            observer.onError(RxApolloError.graphQLErrors(errors))
+                                                        }
+                                                    } else if let data = response.data {
+                                                        observer.onNext(data)
+                                                    }
+                                                case .failure(let error):
+                                                    print(error)
+                                                    observer.onError(error)
+                                                }
+                                                
+            })
             return Disposables.create {
                 watcher.cancel()
             }
         }
     }
-
+    
     /// Performs a mutation by sending it to the server.
     ///
     /// - Parameters:
@@ -92,18 +109,25 @@ public final class ApolloReactiveExtensions {
     /// - Returns: A `Maybe` that emits the results of the mutation.
     public func perform<Mutation: GraphQLMutation>(mutation: Mutation, queue: DispatchQueue = DispatchQueue.main) -> Maybe<Mutation.Data> {
         return Maybe.create { maybe in
-            let cancellable = self.client.perform(mutation: mutation, queue: queue) { result, error in
-                if let error = error {
+            let cancellable = self.client.perform(mutation: mutation, queue: queue) { result in
+                switch result {
+                case .success(let response):
+                    print(response)
+                    if let errors = response.errors {
+                        if !errors.isEmpty {
+                            maybe(.error(RxApolloError.graphQLErrors(errors)))
+                        }
+                    } else if let data = response.data {
+                        maybe(.success(data))
+                    } else {
+                        maybe(.completed)
+                    }
+                case .failure(let error):
+                    print(error)
                     maybe(.error(error))
-                } else if let errors = result?.errors {
-                    maybe(.error(RxApolloError.graphQLErrors(errors)))
-                } else if let data = result?.data {
-                    maybe(.success(data))
-                } else {
-                    maybe(.completed)
                 }
             }
-
+            
             return Disposables.create {
                 cancellable.cancel()
             }
